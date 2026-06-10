@@ -2,4 +2,6 @@ DynamicLyrics.xcodeproj/
 build/
 Payload/
 *.ipa
+*.zip
+ipa/
 .DS_Store
