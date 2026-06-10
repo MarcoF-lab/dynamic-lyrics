@@ -7,20 +7,26 @@ struct LyricLine: Identifiable, Equatable {
 }
 
 enum LRCParser {
-    // Parses "[mm:ss.xx] text" lines (LRCLIB syncedLyrics format).
+    // Parses LRC lines, including condensed multi-timestamp lines
+    // ("[00:10.00][00:20.00] text") and comma decimal separators.
     static func parse(_ lrc: String) -> [LyricLine] {
         var lines: [LyricLine] = []
-        let regex = try! NSRegularExpression(pattern: #"\[(\d+):(\d+(?:\.\d+)?)\](.*)"#)
+        let tagRegex = try! NSRegularExpression(pattern: #"\[(\d+):(\d+(?:[.,]\d+)?)\]"#)
         for raw in lrc.components(separatedBy: .newlines) {
             let range = NSRange(raw.startIndex..., in: raw)
-            guard let m = regex.firstMatch(in: raw, range: range),
-                  let minR = Range(m.range(at: 1), in: raw),
-                  let secR = Range(m.range(at: 2), in: raw),
-                  let txtR = Range(m.range(at: 3), in: raw),
-                  let min = Double(raw[minR]),
-                  let sec = Double(raw[secR]) else { continue }
-            let text = raw[txtR].trimmingCharacters(in: .whitespaces)
-            lines.append(LyricLine(time: min * 60 + sec, text: text))
+            let matches = tagRegex.matches(in: raw, range: range)
+            guard let last = matches.last,
+                  let textRange = Range(NSRange(location: last.range.upperBound,
+                                                length: range.length - last.range.upperBound),
+                                        in: raw) else { continue }
+            let text = raw[textRange].trimmingCharacters(in: .whitespaces)
+            for m in matches {
+                guard let minR = Range(m.range(at: 1), in: raw),
+                      let secR = Range(m.range(at: 2), in: raw),
+                      let mins = Double(raw[minR]),
+                      let secs = Double(raw[secR].replacingOccurrences(of: ",", with: ".")) else { continue }
+                lines.append(LyricLine(time: mins * 60 + secs, text: text))
+            }
         }
         return lines.sorted { $0.time < $1.time }
     }

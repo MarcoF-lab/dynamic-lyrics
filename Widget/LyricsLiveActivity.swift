@@ -31,10 +31,8 @@ struct LyricsLiveActivity: Widget {
             } compactLeading: {
                 Image(systemName: "music.note")
             } compactTrailing: {
-                Text(context.state.currentLine)
+                Image(systemName: context.state.isPlaying ? "waveform" : "pause.fill")
                     .font(.caption2)
-                    .lineLimit(1)
-                    .frame(maxWidth: 80)
             } minimal: {
                 Image(systemName: "music.note")
             }

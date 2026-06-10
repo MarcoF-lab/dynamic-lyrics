@@ -1,3 +1,4 @@
+import ActivityKit
 import Foundation
 
 // Coordinator: polls Spotify, fetches lyrics on track change,
@@ -11,10 +12,15 @@ final class LyricsEngine: ObservableObject {
 
     private let auth: SpotifyAuth
     private var pollTask: Task<Void, Never>?
-    private var tickTimer: Timer?
+    private var tickTask: Task<Void, Never>?
+    private var authTask: Task<Void, Never>?
     private let activity = LiveActivityManager()
     private var lastTrackId: String?
+    private var lastIsPlaying: Bool?
+    private var lastActivityPushAt: Date?
     private var fetchingId: String?
+    private var attemptedId: String?  // one lyrics attempt per track, no refetch spam
+    private var linesTrackId: String? // which track `lines` belongs to
 
     init(auth: SpotifyAuth) {
         self.auth = auth
@@ -22,30 +28,49 @@ final class LyricsEngine: ObservableObject {
 
     func start() {
         guard pollTask == nil else { return }
+        if !activity.activitiesEnabled {
+            errorMessage = "Live Activity disattivate: Impostazioni → Dynamic Lyrics → Attività in tempo reale"
+        }
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.poll()
                 try? await Task.sleep(for: .seconds(2))
             }
         }
-        tickTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+        // Async loop instead of a run-loop Timer: keeps ticking while the
+        // screen is locked (audio keep-alive holds the process alive).
+        tickTask = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.tick()
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+        }
+        // Recover automatically if the user flips the Live Activity toggle.
+        authTask = Task { [weak self] in
+            for await enabled in ActivityAuthorizationInfo().activityEnablementUpdates {
+                guard let self else { return }
+                if enabled {
+                    if self.errorMessage?.contains("Live Activity") == true { self.errorMessage = nil }
+                } else {
+                    self.errorMessage = "Live Activity disattivate: Impostazioni → Dynamic Lyrics → Attività in tempo reale"
+                }
+            }
         }
     }
 
     func stop() {
-        pollTask?.cancel()
-        pollTask = nil
-        tickTimer?.invalidate()
-        tickTimer = nil
+        pollTask?.cancel(); pollTask = nil
+        tickTask?.cancel(); tickTask = nil
+        authTask?.cancel(); authTask = nil
         activity.end()
     }
 
-    // Playback position extrapolated between polls.
+    // Playback position extrapolated between polls, clamped to track length.
     private var positionSeconds: TimeInterval {
         guard let t = track else { return 0 }
         var pos = TimeInterval(t.progressMs) / 1000
         if t.isPlaying { pos += Date().timeIntervalSince(t.fetchedAt) }
+        if t.durationMs > 0 { pos = min(pos, Double(t.durationMs) / 1000) }
         return pos
     }
 
@@ -86,8 +111,8 @@ final class LyricsEngine: ObservableObject {
 
             let name = item.name ?? "—"
             let artist = (item.artists ?? []).compactMap(\.name).joined(separator: ", ")
-            // Stable identity: real id, or name+artist for items without one.
-            let trackKey = item.id ?? "\(name)|\(artist)"
+            // Stable identity: real id, or name+artist+duration for items without one.
+            let trackKey = item.id ?? "local|\(name)|\(artist)|\(item.duration_ms ?? 0)"
 
             let previousKey = track?.id
             let newTrack = CurrentTrack(
@@ -106,19 +131,27 @@ final class LyricsEngine: ObservableObject {
             if trackKey != previousKey {
                 lines = []
                 currentIndex = -1
+                linesTrackId = nil
+                attemptedId = nil
             }
-            // Fetch lyrics for the current track if we don't have them yet
-            // and we're not already fetching this exact track.
-            if lines.isEmpty, fetchingId != trackKey {
+            // One non-blocking lyrics attempt per track: the poll cadence must
+            // never wait on the lyrics fetch, or position extrapolation drifts.
+            if lines.isEmpty, fetchingId != trackKey, attemptedId != trackKey {
                 fetchingId = trackKey
-                let fetched = await LyricsService.fetch(track: newTrack)
-                // Discard if the user already moved to another song meanwhile.
-                if track?.id == trackKey {
-                    lines = fetched
-                    currentIndex = -1
+                attemptedId = trackKey
+                Task { [weak self] in
+                    let fetched = await LyricsService.fetch(track: newTrack)
+                    guard let self else { return }
+                    // Discard if the user already moved to another song meanwhile.
+                    if self.track?.id == trackKey {
+                        self.lines = fetched
+                        self.currentIndex = -1
+                        self.linesTrackId = trackKey
+                    }
+                    if self.fetchingId == trackKey { self.fetchingId = nil }
                 }
-                fetchingId = nil
             }
+            tick()
         } catch {
             errorMessage = "Spotify: \(error.localizedDescription)"
         }
@@ -128,23 +161,37 @@ final class LyricsEngine: ObservableObject {
         guard let t = track else {
             activity.end()
             lastTrackId = nil
+            lastIsPlaying = nil
             return
         }
         let pos = positionSeconds
-        let newIndex = lines.lastIndex(where: { $0.time <= pos }) ?? -1
+        // Never show lines that belong to another track (race between
+        // track change and the async lyrics fetch).
+        let lyricsReady = linesTrackId == t.id
+        let newIndex = lyricsReady ? (lines.lastIndex(where: { $0.time <= pos }) ?? -1) : -1
         let trackChanged = t.id != lastTrackId
-        guard trackChanged || newIndex != currentIndex || activity.needsStart else {
+        let playStateChanged = t.isPlaying != lastIsPlaying
+        // Heartbeat keeps the Live Activity fresh through long instrumental gaps.
+        let heartbeat = lastActivityPushAt.map { Date().timeIntervalSince($0) >= 20 } ?? true
+        guard trackChanged || playStateChanged || activity.needsStart || heartbeat
+                || (lyricsReady && newIndex != currentIndex) else {
             return
         }
         currentIndex = newIndex
         lastTrackId = t.id
-        let current = newIndex >= 0 ? lines[newIndex].text : (lines.isEmpty ? "♪ Nessun testo trovato" : "♪")
-        let next = newIndex + 1 < lines.count ? lines[newIndex + 1].text : ""
-        activity.update(
-            currentLine: current.isEmpty ? "♪" : current,
-            nextLine: next,
-            track: t
-        )
+        lastIsPlaying = t.isPlaying
+        let current: String
+        if !lyricsReady {
+            current = "♪" // neutral while the right lyrics load
+        } else if newIndex >= 0 {
+            let text = lines[newIndex].text
+            current = text.isEmpty ? "♪" : text
+        } else {
+            current = lines.isEmpty ? "♪ Nessun testo trovato" : "♪"
+        }
+        let next = (lyricsReady && newIndex + 1 < lines.count) ? lines[newIndex + 1].text : ""
+        activity.update(currentLine: current, nextLine: next, track: t)
+        lastActivityPushAt = Date()
         if let laErr = activity.lastError { errorMessage = laErr }
     }
 }

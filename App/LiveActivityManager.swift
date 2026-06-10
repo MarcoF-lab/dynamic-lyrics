@@ -7,10 +7,11 @@ final class LiveActivityManager {
     private(set) var lastError: String?
 
     var needsStart: Bool { activity == nil }
+    var activitiesEnabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
 
     func update(currentLine: String, nextLine: String, track: CurrentTrack) {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-            lastError = "Live Activity disattivate in Impostazioni"
+        guard activitiesEnabled else {
+            lastError = "Live Activity disattivate: Impostazioni → Dynamic Lyrics → Attività in tempo reale"
             return
         }
         let state = LyricsActivityAttributes.ContentState(
@@ -20,7 +21,10 @@ final class LiveActivityManager {
             artistName: track.artist,
             isPlaying: track.isPlaying
         )
-        let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(30))
+        // staleDate nil: content stays fresh until our next push — a long
+        // instrumental gap must not dim or kill the activity.
+        let content = ActivityContent(state: state, staleDate: nil,
+                                      relevanceScore: track.isPlaying ? 100 : 50)
         if let activity {
             Task { await activity.update(content) }
         } else {

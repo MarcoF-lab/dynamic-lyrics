@@ -5,6 +5,7 @@ enum LyricsService {
     struct LRCLIBResponse: Decodable {
         let syncedLyrics: String?
         let plainLyrics: String?
+        let duration: Double? // seconds, present on /api/search results
     }
 
     static func fetch(track: CurrentTrack) async -> [LyricLine] {
@@ -19,7 +20,8 @@ enum LyricsService {
         req.setValue("DynamicLyricsClone/1.0", forHTTPHeaderField: "User-Agent")
         if let lines = await request(req), !lines.isEmpty { return lines }
 
-        // Fallback: search without album/duration
+        // Fallback search: pick the result whose duration matches this track,
+        // never blindly the first one (a remix must not get the original's timing).
         var search = URLComponents(string: "https://lrclib.net/api/search")!
         search.queryItems = [
             .init(name: "artist_name", value: track.artist),
@@ -28,8 +30,13 @@ enum LyricsService {
         var sreq = URLRequest(url: search.url!)
         sreq.setValue("DynamicLyricsClone/1.0", forHTTPHeaderField: "User-Agent")
         guard let (data, _) = try? await URLSession.shared.data(for: sreq),
-              let results = try? JSONDecoder().decode([LRCLIBResponse].self, from: data),
-              let synced = results.compactMap(\.syncedLyrics).first else { return [] }
+              let results = try? JSONDecoder().decode([LRCLIBResponse].self, from: data) else { return [] }
+        let target = Double(track.durationMs) / 1000
+        let best = results
+            .filter { $0.syncedLyrics != nil && $0.duration != nil }
+            .min { abs($0.duration! - target) < abs($1.duration! - target) }
+        guard let candidate = best, let dur = candidate.duration, abs(dur - target) <= 3,
+              let synced = candidate.syncedLyrics else { return [] }
         return LRCParser.parse(synced)
     }
 
