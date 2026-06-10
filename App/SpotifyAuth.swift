@@ -95,7 +95,18 @@ final class SpotifyAuth: NSObject, ObservableObject {
             .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }
             .joined(separator: "&")
             .data(using: .utf8)
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else {
+            // invalid_grant etc: refresh token dead, force re-login
+            if status == 400, body["grant_type"] == "refresh_token" {
+                Keychain.delete("spotify_refresh_token")
+                isLoggedIn = false
+            }
+            let detail = String(data: data, encoding: .utf8) ?? ""
+            throw NSError(domain: "SpotifyAuth", code: status,
+                          userInfo: [NSLocalizedDescriptionKey: "token HTTP \(status) \(detail.prefix(120))"])
+        }
         return try JSONDecoder().decode(TokenResponse.self, from: data)
     }
 

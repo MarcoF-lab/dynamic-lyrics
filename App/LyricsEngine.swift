@@ -56,11 +56,14 @@ final class LyricsEngine: ObservableObject {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse else { return }
-            if http.statusCode == 204 { // nothing playing
+            if http.statusCode == 204 || data.isEmpty { // nothing playing (Spotify may send empty 200)
                 track = nil
                 return
             }
-            guard http.statusCode == 200 else { return }
+            guard http.statusCode == 200 else {
+                errorMessage = "Spotify HTTP \(http.statusCode)"
+                return
+            }
 
             // Lenient decode: every field optional so a missing/unexpected
             // field (local files with null id, podcasts, ads) never freezes state.
