@@ -110,11 +110,13 @@ private struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Riproduzione") {
+            Section {
                 Toggle("Resta attiva in background", isOn: $keepAlive)
                     .onChange(of: keepAlive) { _, on in
                         on ? KeepAlive.shared.start() : KeepAlive.shared.stop()
                     }
+            } header: {
+                Text("Riproduzione")
             } footer: {
                 Text("Tiene viva l'app in auto con un audio silenzioso che non disturba Spotify.")
             }
