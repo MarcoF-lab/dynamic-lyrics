@@ -120,8 +120,16 @@ private struct SettingsView: View {
             }
 
             Section("Stato") {
-                LabeledContent("Brano", value: engine.track?.name ?? "—")
-                LabeledContent("Righe testo", value: "\(engine.lines.count)")
+                HStack {
+                    Text("Brano")
+                    Spacer()
+                    Text(engine.track?.name ?? "—").foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text("Righe testo")
+                    Spacer()
+                    Text("\(engine.lines.count)").foregroundStyle(.secondary)
+                }
                 if let err = engine.errorMessage {
                     Text(err).font(.caption).foregroundStyle(.orange)
                 }
