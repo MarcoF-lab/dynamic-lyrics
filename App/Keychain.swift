@@ -1,6 +1,8 @@
 import Foundation
 import Security
 
+// Keychain with UserDefaults fallback: free-signed sideloaded builds can
+// lack the keychain entitlement, making SecItemAdd fail silently.
 enum Keychain {
     static func set(_ value: String, key: String) {
         let data = Data(value.utf8)
@@ -11,7 +13,12 @@ enum Keychain {
         SecItemDelete(query as CFDictionary)
         var attrs = query
         attrs[kSecValueData as String] = data
-        SecItemAdd(attrs as CFDictionary, nil)
+        let status = SecItemAdd(attrs as CFDictionary, nil)
+        if status != errSecSuccess {
+            UserDefaults.standard.set(value, forKey: "kc_fallback_\(key)")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "kc_fallback_\(key)")
+        }
     }
 
     static func get(_ key: String) -> String? {
@@ -22,9 +29,12 @@ enum Keychain {
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        if SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+           let data = result as? Data,
+           let value = String(data: data, encoding: .utf8) {
+            return value
+        }
+        return UserDefaults.standard.string(forKey: "kc_fallback_\(key)")
     }
 
     static func delete(_ key: String) {
@@ -33,5 +43,6 @@ enum Keychain {
             kSecAttrAccount as String: key,
         ]
         SecItemDelete(query as CFDictionary)
+        UserDefaults.standard.removeObject(forKey: "kc_fallback_\(key)")
     }
 }
