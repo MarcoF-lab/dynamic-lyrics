@@ -8,21 +8,14 @@ Come funziona: l'app interroga Spotify (Web API) per la canzone in riproduzione,
 
 ### 1. Pubblica il repo su GitHub
 
-```bash
-cd dynamic-lyrics
-git init && git add -A && git commit -m "init"
-gh repo create dynamic-lyrics --public --source . --push
-```
-
-(repo **pubblico** = minuti GitHub Actions illimitati; privato = 200 min/mese su macOS)
+Fatto: [github.com/MarcoF-lab/dynamic-lyrics](https://github.com/MarcoF-lab/dynamic-lyrics)
 
 ### 2. Attiva GitHub Pages (per il login Spotify)
 
-Su GitHub: **Settings → Pages → Source: Deploy from branch → main → /docs**.
-Dopo ~1 minuto la pagina di callback sarà su:
+Fatto. Callback OAuth:
 
 ```
-https://TUOUSERNAME.github.io/dynamic-lyrics/callback.html
+https://marcof-lab.github.io/dynamic-lyrics/callback.html
 ```
 
 ### 3. Crea l'app Spotify
