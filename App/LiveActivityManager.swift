@@ -4,10 +4,15 @@ import Foundation
 @MainActor
 final class LiveActivityManager {
     private var activity: Activity<LyricsActivityAttributes>?
+    private(set) var lastError: String?
 
     var needsStart: Bool { activity == nil }
 
     func update(currentLine: String, nextLine: String, track: CurrentTrack) {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            lastError = "Live Activity disattivate in Impostazioni"
+            return
+        }
         let state = LyricsActivityAttributes.ContentState(
             currentLine: currentLine,
             nextLine: nextLine,
@@ -19,10 +24,15 @@ final class LiveActivityManager {
         if let activity {
             Task { await activity.update(content) }
         } else {
-            activity = try? Activity.request(
-                attributes: LyricsActivityAttributes(),
-                content: content
-            )
+            do {
+                activity = try Activity.request(
+                    attributes: LyricsActivityAttributes(),
+                    content: content
+                )
+                lastError = nil
+            } catch {
+                lastError = "LA: \(error.localizedDescription)"
+            }
         }
     }
 

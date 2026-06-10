@@ -13,6 +13,8 @@ final class LyricsEngine: ObservableObject {
     private var pollTask: Task<Void, Never>?
     private var tickTimer: Timer?
     private let activity = LiveActivityManager()
+    private var lastTrackId: String?
+    private var fetchingId: String?
 
     init(auth: SpotifyAuth) {
         self.auth = auth
@@ -78,7 +80,7 @@ final class LyricsEngine: ObservableObject {
             guard let item = playing.item else { return }
 
             let previousId = track?.id
-            track = CurrentTrack(
+            let newTrack = CurrentTrack(
                 id: item.id,
                 name: item.name,
                 artist: item.artists.map(\.name).joined(separator: ", "),
@@ -88,31 +90,44 @@ final class LyricsEngine: ObservableObject {
                 isPlaying: playing.is_playing,
                 fetchedAt: Date()
             )
+            track = newTrack
             errorMessage = nil
 
             if item.id != previousId {
                 lines = []
                 currentIndex = -1
-                if let t = track {
-                    lines = await LyricsService.fetch(track: t)
+            }
+            // Fetch lyrics for the current track if we don't have them yet
+            // and we're not already fetching this exact track.
+            if lines.isEmpty, fetchingId != item.id {
+                fetchingId = item.id
+                let fetched = await LyricsService.fetch(track: newTrack)
+                // Discard if the user already moved to another song meanwhile.
+                if track?.id == item.id {
+                    lines = fetched
+                    currentIndex = -1
                 }
+                fetchingId = nil
             }
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "Spotify: \(error.localizedDescription)"
         }
     }
 
     private func tick() {
         guard let t = track else {
             activity.end()
+            lastTrackId = nil
             return
         }
         let pos = positionSeconds
         let newIndex = lines.lastIndex(where: { $0.time <= pos }) ?? -1
-        guard newIndex != currentIndex || activity.needsStart else {
+        let trackChanged = t.id != lastTrackId
+        guard trackChanged || newIndex != currentIndex || activity.needsStart else {
             return
         }
         currentIndex = newIndex
+        lastTrackId = t.id
         let current = newIndex >= 0 ? lines[newIndex].text : (lines.isEmpty ? "♪ Nessun testo trovato" : "♪")
         let next = newIndex + 1 < lines.count ? lines[newIndex + 1].text : ""
         activity.update(
@@ -120,5 +135,6 @@ final class LyricsEngine: ObservableObject {
             nextLine: next,
             track: t
         )
+        if let laErr = activity.lastError { errorMessage = laErr }
     }
 }

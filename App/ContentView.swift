@@ -51,6 +51,15 @@ struct ContentView: View {
                     .padding(.top)
             }
 
+            if let err = engine.errorMessage {
+                Text(err)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                    .padding(.top, 4)
+            }
+
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 18) {
@@ -83,9 +92,6 @@ struct ContentView: View {
             }
             .padding()
 
-            if let err = engine.errorMessage {
-                Text(err).font(.caption).foregroundStyle(.red).padding(.bottom, 4)
-            }
         }
         .onAppear {
             engine.start()
