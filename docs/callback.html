@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <title>Dynamic Lyrics — Login</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="font-family:-apple-system,sans-serif;text-align:center;padding-top:4rem;background:#111;color:#eee">
+  <p>Ritorno all'app…</p>
+  <p><a id="link" style="color:#1DB954">Tocca qui se non si apre da sola</a></p>
+  <script>
+    var target = 'dynamiclyrics://callback' + window.location.search;
+    document.getElementById('link').href = target;
+    window.location.replace(target);
+  </script>
+</body>
+</html>
