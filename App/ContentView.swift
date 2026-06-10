@@ -3,21 +3,34 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var auth: SpotifyAuth
     @EnvironmentObject var engine: LyricsEngine
-    @AppStorage("spotify_client_id") private var clientId = ""
-    @AppStorage("spotify_redirect_uri") private var redirectUri = ""
     @AppStorage("keep_alive") private var keepAlive = true
 
     var body: some View {
         Group {
             if !auth.isLoggedIn {
-                setupView
+                SetupView()
             } else {
-                lyricsView
+                TabView {
+                    LyricsView()
+                        .tabItem { Label("Testi", systemImage: "music.note.list") }
+                    SettingsView()
+                        .tabItem { Label("Impostazioni", systemImage: "gearshape") }
+                }
+                .onAppear {
+                    engine.start()
+                    if keepAlive { KeepAlive.shared.start() }
+                }
             }
         }
     }
+}
 
-    private var setupView: some View {
+private struct SetupView: View {
+    @EnvironmentObject var auth: SpotifyAuth
+    @AppStorage("spotify_client_id") private var clientId = ""
+    @AppStorage("spotify_redirect_uri") private var redirectUri = ""
+
+    var body: some View {
         Form {
             Section("Spotify Developer App") {
                 TextField("Client ID", text: $clientId)
@@ -36,8 +49,12 @@ struct ContentView: View {
             }
         }
     }
+}
 
-    private var lyricsView: some View {
+private struct LyricsView: View {
+    @EnvironmentObject var engine: LyricsEngine
+
+    var body: some View {
         VStack(spacing: 0) {
             if let t = engine.track {
                 VStack(spacing: 2) {
@@ -62,6 +79,11 @@ struct ContentView: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
+                    if engine.lines.isEmpty {
+                        Text(engine.track == nil ? "" : "♪ Nessun testo sincronizzato per questo brano")
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 60)
+                    }
                     LazyVStack(alignment: .leading, spacing: 18) {
                         ForEach(Array(engine.lines.enumerated()), id: \.element.id) { i, line in
                             Text(line.text.isEmpty ? "♪" : line.text)
@@ -77,24 +99,42 @@ struct ContentView: View {
                     withAnimation { proxy.scrollTo(idx, anchor: .center) }
                 }
             }
+        }
+    }
+}
 
-            HStack {
+private struct SettingsView: View {
+    @EnvironmentObject var auth: SpotifyAuth
+    @EnvironmentObject var engine: LyricsEngine
+    @AppStorage("keep_alive") private var keepAlive = true
+
+    var body: some View {
+        Form {
+            Section("Riproduzione") {
                 Toggle("Resta attiva in background", isOn: $keepAlive)
                     .onChange(of: keepAlive) { _, on in
                         on ? KeepAlive.shared.start() : KeepAlive.shared.stop()
                     }
-                Spacer()
-                Button("Logout") {
+            } footer: {
+                Text("Tiene viva l'app in auto con un audio silenzioso che non disturba Spotify.")
+            }
+
+            Section("Stato") {
+                LabeledContent("Brano", value: engine.track?.name ?? "—")
+                LabeledContent("Righe testo", value: "\(engine.lines.count)")
+                if let err = engine.errorMessage {
+                    Text(err).font(.caption).foregroundStyle(.orange)
+                }
+            }
+
+            Section {
+                Button("Logout", role: .destructive) {
                     engine.stop()
                     auth.logout()
                 }
-                .foregroundStyle(.red)
             }
-            .padding()
-
         }
         .onAppear {
-            engine.start()
             if keepAlive { KeepAlive.shared.start() }
         }
     }

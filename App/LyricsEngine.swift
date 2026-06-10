@@ -62,48 +62,55 @@ final class LyricsEngine: ObservableObject {
             }
             guard http.statusCode == 200 else { return }
 
+            // Lenient decode: every field optional so a missing/unexpected
+            // field (local files with null id, podcasts, ads) never freezes state.
             struct Playing: Decodable {
                 struct Item: Decodable {
-                    struct Artist: Decodable { let name: String }
-                    struct Album: Decodable { let name: String }
-                    let id: String
-                    let name: String
-                    let artists: [Artist]
-                    let album: Album
-                    let duration_ms: Int
+                    struct Artist: Decodable { let name: String? }
+                    struct Album: Decodable { let name: String? }
+                    let id: String?
+                    let name: String?
+                    let artists: [Artist]?
+                    let album: Album?
+                    let duration_ms: Int?
                 }
                 let item: Item?
                 let progress_ms: Int?
-                let is_playing: Bool
+                let is_playing: Bool?
             }
             let playing = try JSONDecoder().decode(Playing.self, from: data)
-            guard let item = playing.item else { return }
+            guard let item = playing.item, (item.name ?? "").isEmpty == false else { return }
 
-            let previousId = track?.id
+            let name = item.name ?? "—"
+            let artist = (item.artists ?? []).compactMap(\.name).joined(separator: ", ")
+            // Stable identity: real id, or name+artist for items without one.
+            let trackKey = item.id ?? "\(name)|\(artist)"
+
+            let previousKey = track?.id
             let newTrack = CurrentTrack(
-                id: item.id,
-                name: item.name,
-                artist: item.artists.map(\.name).joined(separator: ", "),
-                album: item.album.name,
-                durationMs: item.duration_ms,
+                id: trackKey,
+                name: name,
+                artist: artist,
+                album: item.album?.name ?? "",
+                durationMs: item.duration_ms ?? 0,
                 progressMs: playing.progress_ms ?? 0,
-                isPlaying: playing.is_playing,
+                isPlaying: playing.is_playing ?? false,
                 fetchedAt: Date()
             )
             track = newTrack
             errorMessage = nil
 
-            if item.id != previousId {
+            if trackKey != previousKey {
                 lines = []
                 currentIndex = -1
             }
             // Fetch lyrics for the current track if we don't have them yet
             // and we're not already fetching this exact track.
-            if lines.isEmpty, fetchingId != item.id {
-                fetchingId = item.id
+            if lines.isEmpty, fetchingId != trackKey {
+                fetchingId = trackKey
                 let fetched = await LyricsService.fetch(track: newTrack)
                 // Discard if the user already moved to another song meanwhile.
-                if track?.id == item.id {
+                if track?.id == trackKey {
                     lines = fetched
                     currentIndex = -1
                 }
